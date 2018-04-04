@@ -1,35 +1,96 @@
+#---|---|---|---|------------------------------------------------------|------|
+#
+# Deako - Virtual Mesh Tool
+# virtswitch_controller.py
+#
+#---|---|---|---|------------------------------------------------------|------|
+
+#---|---|---|---|------------------------------------------------------|------|
+# Authorship
+#---|---|---|---|------------------------------------------------------|------|
+#
+# Tim Lum
+# twhlum@gmail.com
+# Created:  2018.03.03
+# Modified: 2018.04.03
+# For Deako internship
+# Spring 2018
+#
+
+#---|---|---|---|------------------------------------------------------|------|
+# File Description
+#---|---|---|---|------------------------------------------------------|------|
+#
+# This is the implementation file for the virtual mesh, representing a
+# collection of switches.
+#
+
+#---|---|---|---|------------------------------------------------------|------|
+# Package Files
+#---|---|---|---|------------------------------------------------------|------|
+#
+# See Github repository
+# https://github.com/Teabeans/virt_mesh
+#
+
+#--------------------------------------|
+# Begin Code
+#--------------------------------------|
+
+#---|---|---|---|------------------------------------------------------|------|
+#   INCLUDE STATEMENTS
+#   https://docs.python.org/3/py-modindex.html
+#---|---|---|---|------------------------------------------------------|------|
+
 # For all MQTT client operations
-# The MQTT broker must be instantiated elsewhere and is assumed to be running
+# https://www.eclipse.org/paho/clients/python/docs/
 import paho.mqtt.client as mqtt
 
 # For all time-related operations
+# https://docs.python.org/3/library/time.html#module-time
 import time
 
 # For all asynchronous operations
-# The Paho MQTT loop is asynchronous by default and will function as such even without this
+# https://docs.python.org/3/library/asyncio.html#module-asyncio
 import asyncio
+# Note: The Paho MQTT loop is asynchronous by default and will function as such even without this
 
 # For command-line interface generation
+# http://click.pocoo.org/5/
 import click
 
-import urllib3
+# For site querying
+# http://docs.python-requests.org/en/master/
 import requests
+
+# For JSON file parsing
+# https://docs.python.org/3/library/json.html#module-json
 import json
 
+
+
+#---|---|---|---|------------------------------------------------------|------|
+#   GLOBAL VARIABLES
+#---|---|---|---|------------------------------------------------------|------|
+
+#--------------------------------------|
+#   Virtualization fields
+#--------------------------------------|
+
+# The MQTT topic channel that switches watch for queries
 TOPIC_QUERY = "deako/virt/query"
+
+# The MQTT topic channel to which switches will send replies
 TOPIC_REPLY = "deako/virt/reply"
-BROKER = "127.0.0.1"
+
+# The broker address
+BROKER = ""
 the_mesh  = []
 total_status = []
 
-#---|---|---|---|------------------------------------------------------|------|
-#   #profile
-#---|---|---|---|------------------------------------------------------|------|
-# (this script represents a profile, no class is needed)
-
-# Virtualization fields
-
-# Actual fields
+#--------------------------------------|
+#   Actual fields
+#--------------------------------------|
 _address              = None
 _backplates           = []
 _channel              = ""
@@ -64,8 +125,21 @@ _wifi_bridges         = []
 #---|---|---|---|------------------------------------------------------|------|
 #   #switch
 #---|---|---|---|------------------------------------------------------|------|
+# Desc:    Class representing a switch object
+# Params:  NULL
+# PreCons: NULL
+# PosCons: A normally instantiated switch will be connected to an MQTT broker
+# RetVal:  NULL
+# MetCall: NULL
 class switch:
-    # Virtualization fields
+
+#---|---|---|---|------------------------------------------------------|------|
+#   CLASS 'switch' VARIABLES
+#---|---|---|---|------------------------------------------------------|------|
+
+#--------------------------------------|
+#   Virtualization fields
+#--------------------------------------|
     _topic          = ''
     _is_on          = True
     _room           = ''
@@ -74,7 +148,9 @@ class switch:
     message_ID      = ''
     message_command = ''
 
-    # Actual fields
+#--------------------------------------|
+#   Actual fields
+#--------------------------------------|
     _backplate_slot        = 0
     _device_type           = "Smart"
     _downstream            = True
@@ -96,20 +172,56 @@ class switch:
     _sn                    = "0DEAC00000003354"
     _uuid                  = "43805db7-fb82-45f8-9a61-56724e0a717c"
 
+#--------------------------------------|
+#   #parse_ID()
+#--------------------------------------|
+# Desc:    NULL
+# Params:  NULL
+# PreCons: NULL
+# PosCons: NULL
+# RetVal:  NULL
+# MetCall: NULL
     def parse_ID(self, query):
         return(33045)
         # TODO: Write actual parse logic
     
+#--------------------------------------|
+#   #parse_commands()
+#--------------------------------------|
+# Desc:    NULL
+# Params:  NULL
+# PreCons: NULL
+# PosCons: NULL
+# RetVal:  NULL
+# MetCall: NULL
     def parse_command(self, query):
         return("is_on")
         # TODO: Write actual parse logic
 
+#--------------------------------------|
+#   #respond()
+#--------------------------------------|
+# Desc:    NULL
+# Params:  NULL
+# PreCons: NULL
+# PosCons: NULL
+# RetVal:  NULL
+# MetCall: NULL
     # Response behavior
     def respond(self, command):
         if (command == "is_on"):
             # TODO: Replace with field state
             self._client.publish(TOPIC_REPLY, "{} is_on True".format(self._mesh_id))
 
+#--------------------------------------|
+#   #switch_unpack()
+#--------------------------------------|
+# Desc:    NULL
+# Params:  NULL
+# PreCons: NULL
+# PosCons: NULL
+# RetVal:  NULL
+# MetCall: NULL
     def switch_unpack(self, client, userdata, message):
         print("({}) Message received :".format(self._mesh_id), str(message.payload.decode("utf-8")), )
         # print("Message topic      :", message.topic)
@@ -123,7 +235,16 @@ class switch:
         else:
             print("({}) That's not my number. I don't care.".format(self._mesh_id))
 
-    def __init__(self, client, switch_profile):
+#--------------------------------------|
+#   #__init__()
+#--------------------------------------|
+# Desc:    NULL
+# Params:  NULL
+# PreCons: NULL
+# PosCons: NULL
+# RetVal:  NULL
+# MetCall: NULL
+    def __init__(self, client, broker, switch_profile):
         # Virtualization fields
         self._topic                 = TOPIC_QUERY
         self._is_on                 = True
@@ -157,34 +278,29 @@ class switch:
         # Connect and subscribe
         self._client = client
         self._client.on_message = self.switch_unpack
-        self._client.connect(BROKER)
+        self._client.connect(broker)
         self._client.loop_start()
         self._client.subscribe(self._topic)
 
-#    def __init__(self, topic, ID, is_on, room, group, client):
-#        self._topic  = topic
-#        self._ID     = ID
-#        self._is_on  = is_on
-#        self._room   = room
-#        self._group  = group
-#        self._client = client
-#        self._client.on_message = self.switch_unpack
-#        # Connect and subscribe
-#        self._client.connect(BROKER)
-#        self._client.loop_start()
-#        self._client.subscribe(TOPIC_QUERY)
+#---|---|---|---|------------------------------------------------------|------|
+#   # End class switch
+#---|---|---|---|------------------------------------------------------|------|
 
 
 
 #---|---|---|---|------------------------------------------------------|------|
-#   #Controller
+#   GLOBAL (CONTROLLER) METHODS
 #---|---|---|---|------------------------------------------------------|------|
 
-#--------|---------|---------|---------|
-#   #control_unpack
-#--------|---------|---------|---------|
-# Desc: Message unpack behavior
-# Args: arg1 - , arg2 - , arg3
+#--------------------------------------|
+#   #control_unpack()
+#--------------------------------------|
+# Desc:    NULL
+# Params:  NULL
+# PreCons: NULL
+# PosCons: NULL
+# RetVal:  NULL
+# MetCall: NULL
 def control_unpack(client, userdata, message):
     payload = str(message.payload.decode("utf-8"))
     print("(CTRL) Message received:" , payload)
@@ -193,20 +309,26 @@ def control_unpack(client, userdata, message):
     value    = parse_reply_value(payload)
     process_reply(ID, category, value)
 
-#--------|---------|---------|---------|
-#   #virtswitch_controller
-#--------|---------|---------|---------|
-# Desc: Message unpack behavior
-# Args: arg1 - , arg2 - , arg3
-# PreCons:
-# PosCons:
-#
-#
+#--------------------------------------|
+#   #virtswitch_controller()
+#--------------------------------------|
+# Desc:    Primary execution method (main())
+#          Not named 'main()' due to use of 'click' library
+# Params:  NULL
+# PreCons: NULL
+# PosCons: NULL
+# RetVal:  NULL
+# MetCall: NULL
 @click.command()
 @click.option('--broker_addy', default = "127.0.0.1", help = 'The MQTT broker address')
 @click.option('-v', '--verbose', is_flag = True, help = 'Enables verbose mode')
 @click.argument('mesh_file')
 def virtswitch_controller(mesh_file, broker_addy, verbose):
+
+    #--------------------------------------|
+    #   Verbose Mode
+    #--------------------------------------|
+
     if(verbose == True):
         def verboseprint(*args):
         # Print each argument separately so caller doesn't need to
@@ -217,9 +339,15 @@ def virtswitch_controller(mesh_file, broker_addy, verbose):
     else:   
         verboseprint = lambda *a: None      # do-nothing function
 
+
+
     # Setup
     print("Verify arg vector: broker_addy:", broker_addy)
     print("Verify arg vector: mesh_file  :", mesh_file)
+
+    #--------------------------------------|
+    #   Profile Acquisition Setup
+    #--------------------------------------|
 
     # Acquire and parse JSON file
     params = {'limit': 16, 'country': 'us', 'apikey': 'API-KEY'}
@@ -227,20 +355,23 @@ def virtswitch_controller(mesh_file, broker_addy, verbose):
     response = requests.get(mesh_file, params=params)
 
     # Assign the response (as a dictionary)
+    a_profile       = response.json()
+    switch_profiles = response.json()['switches']
+    a_switch        = response.json()['switches'][0] # [0] [MAX]
+    a_field         = response.json()['switches'][0]['uuid']
+
+    # --- FOR TESTING PURPOSES ONLY --- START ---
     print()
-    a_profile = response.json()
     print("JSON Profile:")
     print(type(a_profile))
     print(a_profile)
 
     print()
-    switch_profiles = a_profile['switches']
     print("Switch Profiles:")
     print(type(switch_profiles))
     print(switch_profiles)
 
     print()
-    a_switch = a_profile['switches'][0]
     print("First Switch Profile:")
     print(type(a_switch))
     print(a_switch)
@@ -249,6 +380,7 @@ def virtswitch_controller(mesh_file, broker_addy, verbose):
     print("First Switch fields:")
     for i in a_switch:
         print(i, ":", a_switch[i], type(a_switch[i]))
+    # --- FOR TESTING PURPOSES ONLY --- END ---
 
     # Parse the profile (mesh) fields
     print()
@@ -257,6 +389,10 @@ def virtswitch_controller(mesh_file, broker_addy, verbose):
     # For debugging
     # print_profile()
 
+    #--------------------------------------|
+    #   Mesh Generation Setup
+    #--------------------------------------|
+
     # Generate a bank of switches
     # For every switch in the profile...
     vID = 0
@@ -264,38 +400,56 @@ def virtswitch_controller(mesh_file, broker_addy, verbose):
         # Make a new switch and append it to the the_mesh
         # By dictionary
         new_client = mqtt.Client(str(vID))
-        the_mesh.append( switch(new_client, a_profile) )
+        the_mesh.append( switch(new_client, broker_addy, a_profile) )
         vID += 1
         # By fields
         # the_mesh.append(switch(TOPIC_QUERY, every_switch['uuid'], True, 'void', 'g3', mqtt.Client(every_switch['uuid'])))
-
-
 
     # the_mesh.append(switch(TOPIC_QUERY, '001', True, 'kitchen', 'g1', mqtt.Client('A_Switch1')))
     # the_mesh.append(switch(TOPIC_QUERY, '002', False, 'kitchen', 'g2', mqtt.Client('A_Switch2')))
     # the_mesh.append(switch(TOPIC_QUERY, '003', True, 'bath', 'g1', mqtt.Client('A_Switch3')))
 
-    # Initialize is_on to inversion of actual states
+
+
+    #--------------------------------------|
+    #   Status Tracking Setup
+    #--------------------------------------|
+
+    # Collate all statuses together by...
+    # Generating a status-tracking duplicate of the_mesh
+    mesh_status = dict(the_mesh)
+
     ID_status    = ['001', '002', '003']
     is_on_status = [0, 1, 0]
     room_status  = ['kitchen', 'kitchen', 'bath']
-    # Collate all statuses together
     total_status.append(ID_status)
     total_status.append(is_on_status)
     total_status.append(room_status)
+
+
+
+    #--------------------------------------|
+    #   Controller MQTT Client Setup
+    #--------------------------------------|
 
     # Create a control client
     control = mqtt.Client('000_Controller')
     control.on_message = control_unpack #attach function to callback
 
     # Connect to broker
-    control.connect(BROKER)
+    control.connect(broker_addy)
 
     # ???
     control.loop_start() #start the loop
 
     # Subscribe to topic channel
     control.subscribe(TOPIC_REPLY)
+
+
+
+    #--------------------------------------|
+    #   Mesh operations
+    #--------------------------------------|
 
     # Check status of switch '003' is_on
     print()
@@ -312,9 +466,26 @@ def virtswitch_controller(mesh_file, broker_addy, verbose):
     print("003 is_on: {}".format(total_status[1][2]))
     print()
 
-    control.loop_stop() #stop the loop    
+    control.loop_stop() #stop the loop
+
     print("Goodbye, World!")
 
+#--------------------------------------|
+#   End #virtswitch_controller()
+#--------------------------------------|
+
+
+
+#--------------------------------------|
+#   #parse_profile()
+#--------------------------------------|
+# Desc:    Preperatory function - Breaks JSON file into component pieces
+# Params:  [] arg1 - The JSON profile as a dictionary
+# PreCons: GIGO - Assumes correctly formatted Deako JSON input.
+#          No error checking is performed.
+# PosCons: The fields of a Deako JSON profile are stored to global variables.
+# RetVal:  None
+# MetCall: None
 def parse_profile(mesh_dict):
     global _address
     global _backplates
@@ -362,7 +533,7 @@ def parse_profile(mesh_dict):
     _schedules            = mesh_dict["schedules"]
     _show_wifi_setup      = mesh_dict["show_wifi_setup"]
     # Replaced by the_mesh[]
-    # _switches             = []
+    # _switches           = []
     _toggle_scene_enabled = mesh_dict["toggle_scene_enabled"]
     _tz                   = mesh_dict["tz"]
     _uuid                 = mesh_dict["uuid"]
@@ -371,6 +542,15 @@ def parse_profile(mesh_dict):
     _wifi_bridge_state    = mesh_dict["wifi_bridge_state"]
     _wifi_bridges         = mesh_dict["wifi_bridges"]
 
+#--------------------------------------|
+#   #print_profile()
+#--------------------------------------|
+# Desc:    For debugging, prints the contents of this profile
+# Params:  None
+# PreCons: None
+# PosCons: None
+# RetVal:  None
+# MetCall: None
 def print_profile():
     print("Address        :", _address)
     print("Backplates     :", _backplates)
@@ -399,23 +579,74 @@ def print_profile():
     print("Bridge state   :", _wifi_bridge_state)
     print("Bridges        :", _wifi_bridges)
 
+#--------------------------------------|
+#   #parse_reply_ID()
+#--------------------------------------|
+# Desc:    Parses a response payload, identifying the mesh_id of the sender
+#          <int>     <string>   <variable>
+#          <mesh_id> <category> <value>
+#          "33045    is_on      True"
+# Params:  string arg1 - The query (payload)
+# PreCons: GIGO - Assumes correctly formatted input, no error checking is performed
+# PosCons: None
+# RetVal:  int - The mesh_id from where the reply originated
+# MetCall: None
 def parse_reply_ID(query):
     index = total_status[0].index("003")
     # print("Index:", index)
     return(index)
+    # TODO: Determine actual response format
     # TODO: Write actual parse logic
 
+#--------------------------------------|
+#   #parse_reply_category()
+#--------------------------------------|
+# Desc:    Parses a response payload, identifying the response type
+#          <int>     <string>   <variable>
+#          <mesh_id> <category> <value>
+#          "33045    is_on      True"
+# Params:  string arg1 - The query (payload)
+# PreCons: GIGO - Assumes correctly formatted input, no error checking is performed
+# PosCons: None
+# RetVal:  string - The category or type of the reply
+# MetCall: None
 def parse_reply_category(query):
     return("is_on")
+    # TODO: Determine actual response format
     # TODO: Write actual parse logic
 
+#--------------------------------------|
+#   #print_profile()
+#--------------------------------------|
+# Desc:    Parses a response payload, identifying the value
+#          <int>     <string>   <variable>
+#          <mesh_id> <category> <value>
+#          "33045    is_on      True"
+# Params:  string arg1 - The query (payload)
+# PreCons: GIGO - Assumes correctly formatted input, no error checking is performed
+# PosCons: None
+# RetVal:  <variable> - The value contained in the response string
+# MetCall: None
 def parse_reply_value(query):
     return(1) # True
+    # TODO: Determine actual response format
     # TODO: Write actual parse logic
 
-def process_reply(index, category, value):
-    print('Processing: {} : {} : {}'.format(index, category, value))
-    total_status[1][index] = value
+#--------------------------------------|
+#   #process_reply()
+#--------------------------------------|
+# Desc:    Used by the controller to update its internal registers (logs) based
+#          on arguments received from the mesh.
+# Params:  int arg1        - The mesh_id of the responding switch
+#          string arg2     - The category of the response
+#          <variable> arg3 - The response value
+# PreCons: GIGO - Valid arguments are passed, no error checking is performed
+# PosCons: Controller registers are updated
+# RetVal:  None
+# MetCall: None
+def process_reply(mesh_id, category, value):
+    print('Processing: {} : {} : {}'.format(mesh_id, category, value))
+    total_status[1][mesh_id] = value
 
 
 #---|---|---|---|------------------------------------------------------|------|
