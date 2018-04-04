@@ -59,6 +59,10 @@ import asyncio
 # http://click.pocoo.org/5/
 import click
 
+# For deep copy of dictionaries
+# https://docs.python.org/2/library/copy.html
+import copy
+
 # For site querying
 # http://docs.python-requests.org/en/master/
 import requests
@@ -342,8 +346,8 @@ def virtswitch_controller(mesh_file, broker_addy, verbose):
 
 
     # Setup
-    print("Verify arg vector: broker_addy:", broker_addy)
-    print("Verify arg vector: mesh_file  :", mesh_file)
+    verboseprint("Verify arg vector: broker_addy:", broker_addy)
+    verboseprint("Verify arg vector: mesh_file  :", mesh_file)
 
     #--------------------------------------|
     #   Profile Acquisition Setup
@@ -358,7 +362,7 @@ def virtswitch_controller(mesh_file, broker_addy, verbose):
     a_profile       = response.json()
     switch_profiles = response.json()['switches']
     a_switch        = response.json()['switches'][0] # [0] [MAX]
-    a_field         = response.json()['switches'][0]['uuid']
+    # a_field       = response.json()['switches'][0]['uuid']
 
     # --- FOR TESTING PURPOSES ONLY --- START ---
     print()
@@ -417,7 +421,10 @@ def virtswitch_controller(mesh_file, broker_addy, verbose):
 
     # Collate all statuses together by...
     # Generating a status-tracking duplicate of the_mesh
-    mesh_status = dict(the_mesh)
+    # TODO: Get deep copy working
+    # mesh_status = copy.deepcopy(the_mesh)
+    print("Mesh status:")
+    print(the_mesh)
 
     ID_status    = ['001', '002', '003']
     is_on_status = [0, 1, 0]
