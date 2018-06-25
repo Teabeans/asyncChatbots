@@ -184,6 +184,10 @@ class switch:
 #--------------------------------------|
 #   Timer fields
 #--------------------------------------|
+
+    #--------------------------------------|
+    #   #timer_up()
+    #--------------------------------------|
     # Desc:    Switch behavior for end-of-timer trigger
     def timer_up(self):
         print('timer_up() expired. Turning light on.')
@@ -194,10 +198,52 @@ class switch:
 
     eggtimer           = threading.Timer(0, timer_up)
     eggtimer_exists    = False
-    eggtimer_isPaused  = False
+    eggtimer_isPaused  = True
     eggtimer_startTime = datetime.datetime # https://docs.python.org/3/library/datetime.html
     eggtimer_endTime   = datetime.datetime
     eggtimer_duration  = datetime.datetime
+
+#--------------------------------------|
+#   Memory fields
+#--------------------------------------|
+    # String dictionary to store instructions being written
+    memory_committed = {0: "NULL",
+                        1: "NULL",
+                        2: "NULL",
+                        3: "NULL",
+                        4: "NULL",
+                        5: "NULL",
+                        6: "NULL",
+                        7: "NULL",
+                        8: "NULL",
+                        9: "NULL",
+                        10:"NULL",
+                        11:"NULL",
+                        12:"NULL",
+                        13:"NULL",
+                        14:"NULL",
+                        15:"NULL"}
+    # Empty string dictionary to store instructions being written
+    memory_temp      = {0: "NULL",
+                        1: "NULL",
+                        2: "NULL",
+                        3: "NULL",
+                        4: "NULL",
+                        5: "NULL",
+                        6: "NULL",
+                        7: "NULL",
+                        8: "NULL",
+                        9: "NULL",
+                        10:"NULL",
+                        11:"NULL",
+                        12:"NULL",
+                        13:"NULL",
+                        14:"NULL",
+                        15:"NULL"}
+    # Handle of current writer
+    mutex = -1
+    # Position of current write
+    mem_position = 0
 
 #--------------------------------------|
 #   Actual fields
@@ -247,7 +293,7 @@ class switch:
         if (query_ID == self._mesh_id or query_ID == 99999):
             # Slight pause to improve readability of debugging
             if (self.opt_verbose): time.sleep(1)
-            if (self.opt_verbose): print("  ({} : {}) I should respond!".format(self._mesh_id, query_ID))
+            if (self.opt_verbose): print("  ({} : {}) I should react!".format(self._mesh_id, query_ID))
             # Separate the ID from the decoded payload
             query_command = self.parse_command(decoded_payload)
             query_cmd_val = self.parse_cmd_val(decoded_payload)
@@ -361,10 +407,6 @@ class switch:
     # Response behavior        value['string'] value['int'] value['bool']
     def respond(self, message, value):
 
-        #--------------------------------------|
-        #   #timer_up()
-        #--------------------------------------|
-
         isQuery = False
         pubstring = '--NULL-- --NULL-- --NULL--'
 
@@ -425,7 +467,7 @@ class switch:
                 # So if the timer is not running and duration is greater than 0
                 if (self.eggtimer_isPaused == True and self.eggtimer_duration > 0):
                     # Create a timer object
-                    self.eggtimer = threading.Timer(self.eggtimer_duration, self.timer_up())
+                    self.eggtimer = threading.Timer(self.eggtimer_duration, self.timer_up)
                     self.eggtimer_isPaused = False
                     # Set a signal timer for n seconds
                     if (VERBOSE): print("  ({}) Alarm started! Duration: {}".format(self._mesh_id, self.eggtimer_duration))
@@ -446,11 +488,13 @@ class switch:
             self.eggtimer_isPaused = True
             self.eggtimer.cancel()
             # Difference between two datetime instances to microsecond resolution
-            eggtimer_elapsed = (datetime.timedelta.total_seconds(self.eggtimer_startTime, self.eggtimer_endTime))
+            eggtimer_elapsed = (datetime.timedelta(self.eggtimer_startTime, self.eggtimer_endTime))
+            print("Eggtimer elapsed")
+            print(eggtimer_elapsed)
             # Adjust duration to be previous duration minus time elapsed
             self.eggtimer_duration = self.eggtimer_duration - eggtimer_elapsed
             # And generate a new thread for the updated time
-            self.eggtimer = threading.Timer(self.eggtimer_duration, self.timer_up())
+            self.eggtimer = threading.Timer(self.eggtimer_duration, self.timer_up)
         
         elif (message == 'timer_warp'):
             if (VERBOSE): print("  ({}) Executing command: '{}' : ({})".format(self._mesh_id, message, value))
@@ -463,7 +507,7 @@ class switch:
                 self.eggtimer.cancel()
                 # Set a new timer for the message value
                 self.eggtimer_duration = value['int']
-                self.eggtimer = threading.Timer(self.eggtimer_duration, self.timer_up())
+                self.eggtimer = threading.Timer(self.eggtimer_duration, self.timer_up)
                 self.eggtimer.start()
                 self.eggtimer_isPaused = False
 
@@ -471,7 +515,7 @@ class switch:
             if (VERBOSE): print("  ({}) Executing command: '{}'".format(self._mesh_id, message))
             # If the timer exists and is paused... 
             if (self.eggtimer_exists == True and self.eggtimer_isPaused == True):
-                self.eggtimer = threading.Timer(self.eggtimer_duration, self.timer_up())
+                self.eggtimer = threading.Timer(self.eggtimer_duration, self.timer_up)
                 self.eggtimer_isPaused = False
                 self.eggtimer.start()
             # Otherwise, Resume has no effect
@@ -485,6 +529,23 @@ class switch:
             self.eggtimer.cancel()
             self.eggtimer_duration = 0
             self.eggtimer_exists = False
+
+        elif (message[0:9] == 'mem_write'):
+            if (VERBOSE): print("  ({}) Executing command: '{}'".format(self._mesh_id, message))
+            mem_slot = int(message[9:])
+            self.memory_temp[mem_slot] = value['string']
+            if (VERBOSE): print("  ({}) Memory written: {} = '{}'".format(self._mesh_id, mem_slot, self.memory_temp[mem_slot]))
+
+        # 0    1    2    3    4    5    6    7    8    9    10   11   12   13   14   15
+        # this isat esto fthe emer genc ywri tefu ncti onal ityl ooka tusw rite whee eeee
+        elif (message[0:8] == 'mem_read'):
+            if (VERBOSE): print("  ({}) Executing command: '{}'".format(self._mesh_id, message))
+            for i in range(0, 16):
+                print(self.memory_temp[i], end = '')
+
+
+
+
         # End possible COMMANDS
 
         # All possible queries handled, pubstring reflects this switch's response
@@ -769,7 +830,7 @@ def virtswitch_controller(mesh_file, broker_addy, verbose, run):
         # total_status.append( shadow_switch._mesh_id : shadow_switch )
         #            KEY                     = VALUE
         total_status[str(shadow_switch._mesh_id)] = shadow_switch
-        # ASSUMES NO REPEAT MESH IDS, OTHERWISE WE'LL LOST VALUES
+        # ASSUMES NO REPEAT MESH IDS, OTHERWISE WE'LL LOSE VALUES
 
         # Increment the vID numbers
         vID += 1
@@ -880,6 +941,8 @@ def execute(command_array):
                 print("(CTRL) Reporting: 'is_on'")
                 for i in total_status:
                     print("  ({}) is_on == ({})".format(total_status[i]._mesh_id, total_status[i]._is_on))
+            elif (cmd == 'dimmage'):
+                print("(CTRL) Reporting: 'is_on'")
 
         elif (cmd == 'build'):
             print("(CTRL) Build command detected. TODO: Write this")
@@ -917,9 +980,16 @@ def execute(command_array):
         elif (cmd == 'timer_warp'):
             control.publish(TOPIC_QUERY, "{} {} {}".format(tgt, cmd, val))
 
-
-#        elif (cmd == ''):
-#            control.publish(TOPIC_QUERY, "{} {} {}".format(tgt)
+        elif (cmd == 'mem_write'):
+            write_array = {}
+            # Send the message
+            for i in range(0, 16):
+                write_array[i] = val[((i)*4):((i+1)*4)]
+                # 33044 mem_write0-15 abcd
+                control.publish(TOPIC_QUERY, "{} {}{} {}".format(tgt, cmd, (i), write_array[i]))
+            
+        elif (cmd == 'mem_read'):
+            control.publish(TOPIC_QUERY, "{} {} {}".format(tgt, cmd, val))
 
 #        elif (cmd == ''):
 #            control.publish(TOPIC_QUERY, "{} {} {}".format(tgt)

@@ -71,6 +71,10 @@ import requests
 # https://docs.python.org/3/library/json.html#module-json
 import json
 
+# For randomized switch behavior
+# https://docs.python.org/3/library/random.html
+import random
+
 
 
 #---|---|---|---|------------------------------------------------------|------|
@@ -89,40 +93,52 @@ TOPIC_REPLY = "deako/virt/reply"
 
 # The broker address
 BROKER = ""
-the_mesh  = []
-total_status = []
+
+# Global verbosity, false by default. Changed by virtswitch_controller
+VERBOSE = False
+
+# The maximum number of switches in a mesh
+MAX_SWITCHES = 512
+
+# The virtual mesh
+the_mesh     = {}
+# A mirror of the virtual mesh that holds final statuses
+total_status = {}
+
+control = mqtt.Client('000_Controller')
+command_file = open('commands.txt', 'r')
 
 #--------------------------------------|
 #   Actual fields
 #--------------------------------------|
 _address              = None
-_backplates           = []
+_backplates           = {}
 _channel              = ""
-_faceplates           = []
-_floors               = []
-_groups               = []
+_faceplates           = {}
+_floors               = {}
+_groups               = {}
 _icon                 = ""
 _load_count           = 0
-_loads                = []
+_loads                = {}
 _mesh_api_rev         = 0
 _mesh_passphrase      = ""
 _name                 = ""
 _ordered              = False
-_orders               = []
+_orders               = {}
 _role                 = ""
-_rooms                = []
-_scenes               = []
-_schedules            = []
+_rooms                = {}
+_scenes               = {}
+_schedules            = {}
 _show_wifi_setup      = False
-# Replaced by the_mesh[]
-# _switches             = []
+# Replaced by the_mesh{}
+# _switches             = {}
 _toggle_scene_enabled = False
 _tz                   = ""
 _uuid                 = ""
 _wifi_bridge_checkin  = None
 _wifi_bridge_ssid     = None
 _wifi_bridge_state    = ""
-_wifi_bridges         = []
+_wifi_bridges         = {}
 
 
 
@@ -146,11 +162,13 @@ class switch:
 #--------------------------------------|
     _topic          = ''
     _is_on          = True
+    _dimmage        = 0
     _room           = ''
     _group          = ''
     _client         = None
     message_ID      = ''
     message_command = ''
+    opt_verbose     = False
 
 #--------------------------------------|
 #   Actual fields
@@ -177,47 +195,6 @@ class switch:
     _uuid                  = "43805db7-fb82-45f8-9a61-56724e0a717c"
 
 #--------------------------------------|
-#   #parse_ID()
-#--------------------------------------|
-# Desc:    NULL
-# Params:  NULL
-# PreCons: NULL
-# PosCons: NULL
-# RetVal:  NULL
-# MetCall: NULL
-    def parse_ID(self, query):
-        return(33045)
-        # TODO: Write actual parse logic
-    
-#--------------------------------------|
-#   #parse_commands()
-#--------------------------------------|
-# Desc:    NULL
-# Params:  NULL
-# PreCons: NULL
-# PosCons: NULL
-# RetVal:  NULL
-# MetCall: NULL
-    def parse_command(self, query):
-        return("is_on")
-        # TODO: Write actual parse logic
-
-#--------------------------------------|
-#   #respond()
-#--------------------------------------|
-# Desc:    NULL
-# Params:  NULL
-# PreCons: NULL
-# PosCons: NULL
-# RetVal:  NULL
-# MetCall: NULL
-    # Response behavior
-    def respond(self, command):
-        if (command == "is_on"):
-            # TODO: Replace with field state
-            self._client.publish(TOPIC_REPLY, "{} is_on True".format(self._mesh_id))
-
-#--------------------------------------|
 #   #switch_unpack()
 #--------------------------------------|
 # Desc:    NULL
@@ -227,17 +204,144 @@ class switch:
 # RetVal:  NULL
 # MetCall: NULL
     def switch_unpack(self, client, userdata, message):
-        print("({}) Message received :".format(self._mesh_id), str(message.payload.decode("utf-8")), )
-        # print("Message topic      :", message.topic)
-        # print("Message qos        :", message.qos)
-        # print("Message retain flag:", message.retain)
-        query_ID      = self.parse_ID(message)
-        query_command = self.parse_command(message)
-        if (query_ID == self._mesh_id):
-            print("({}) That's my number! I should respond!".format(self._mesh_id))
-            self.respond(query_command)
-        else:
-            print("({}) That's not my number. I don't care.".format(self._mesh_id))
+#        if (self.opt_verbose): print("({}) Message received: '{}'".format(self._mesh_id, str(message.payload.decode("utf-8"))))
+        # if (self.opt_verbose): print("Message topic      :", message.topic)
+        # if (self.opt_verbose): print("Message qos        :", message.qos)
+        # if (self.opt_verbose): print("Message retain flag:", message.retain)
+
+        # Decode the payload to a string
+        decoded_payload = str(message.payload.decode("utf-8"))
+        # Separate the ID from the decoded payload
+        query_ID = self.parse_ID(decoded_payload)
+
+        # Determine if a response is required
+        if (query_ID == self._mesh_id or query_ID == 99999):
+            # Slight pause to improve readability of debugging
+            if (self.opt_verbose): time.sleep(1)
+            if (self.opt_verbose): print("  ({} : {}) I should respond!".format(self._mesh_id, query_ID))
+            # Separate the ID from the decoded payload
+            query_command = self.parse_command(decoded_payload)
+            query_cmd_val = self.parse_cmd_val(decoded_payload)
+            # Respond
+            self.respond(query_command, query_cmd_val)
+        # else, do nothing
+
+#--------------------------------------|
+#   #switch_terminate()
+#--------------------------------------|
+# Desc:    Termination behavior for a switch MQTT client
+# Params:  NULL
+# PreCons: NULL
+# PosCons: NULL
+# RetVal:  NULL
+# MetCall: NULL
+    def switch_terminate(self, client, userdata, message):
+        if (self.opt_verbose): print("({}) Termination callback, disconnected".format(self._mesh_id))
+
+#--------------------------------------|
+#   #parse_ID()
+#--------------------------------------|
+# Desc:    Parses a received message and returns the ID component of that message
+# Params:  arg1 switch - This switch object
+#          arg2 string - The decoded payload query
+# PreCons: GIGO - Query is assumed to be formatted correctly, no error checking is performed
+#          '<MeshID> <Command> <Value>'
+# PosCons: NULL
+# RetVal:  String - The command component of the received message
+# MetCall: NULL
+    def parse_ID(self, query):
+        # Split the string by whitespace and take the first index position (0)
+        retString = query.split(' ')[0]
+        # Verbose print the result
+        # if (self.opt_verbose): print("({}) parse_ID(query):".format(self._mesh_id), retString)
+        return(int(retString))
+    
+#--------------------------------------|
+#   #parse_command()
+#--------------------------------------|
+# Desc:    Parses a received message and returns the command component of that message
+# Params:  arg1 switch - This switch object
+#          arg2 string - The decoded payload query
+# PreCons: GIGO - Query is assumed to be formatted correctly, no error checking is performed
+#          '<MeshID> <Command> <Value>'
+# PosCons: NULL
+# RetVal:  String - The command component of the received message
+# MetCall: NULL
+    def parse_command(self, query):
+        # Split the string by whitespace and take the second index position (1)
+        retString = query.split(' ')[1]
+        # Verbose print the result
+        # if (self.opt_verbose): print("({}) parse_command(query):".format(self._mesh_id), retString)
+        return(retString)
+
+#--------------------------------------|
+#   #parse_cmd_val()
+#--------------------------------------|
+# Desc:    Parses a received message and returns the command value component of that message
+# Params:  arg1 switch - This switch object
+#          arg2 string - The decoded payload query
+# PreCons: GIGO - Query is assumed to be formatted correctly, no error checking is performed
+#          '<MeshID> <Command> <Value>'
+# PosCons: NULL
+# RetVal:  String - The command value component of the received message
+# MetCall: NULL
+    def parse_cmd_val(self, query):
+        # Split the string by whitespace and take the third index position (2)
+        retString = query.split(' ')[2]
+        # Verbose print the result
+        # if (self.opt_verbose): print("({}) parse_cmd_val(query):".format(self._mesh_id), retString)
+        return(retString)
+
+#--------------------------------------|
+#   #respond()
+#--------------------------------------|
+# Desc:    Switch response behavior for all query cases
+# Params:  NULL
+# PreCons: NULL
+# PosCons: A PROPERLY FORMATTED string response to the query has been published
+#          GIGO - No response is issued for bad queries
+# RetVal:  None
+# MetCall: NULL
+    # Response behavior
+    def respond(self, message, value):
+        isQuery = False
+        pubstring = '--NULL-- --NULL-- --NULL--'
+
+        # All possible QUERIES a switch can receive go here
+
+        if (message == "is_on"):
+            isQuery = True
+            pubstring = "{} {} {}".format(self._mesh_id, message, self._is_on)
+
+        elif (message == "dimmage"):
+            isQuery = True
+            pubstring = "{} {} {}".format(self._mesh_id, message, self._dimmage)
+
+        # End possible QUERIES
+
+        # All possible COMMANDS a switch can receive go here
+
+        elif (message == 'set_dimmage'):
+            if (VERBOSE): print("({}) Executing command: '{}'".format(self._mesh_id, message))
+            self._dimmage = value
+
+        elif (message == 'set_on'):
+            if (VERBOSE): print("({}) Executing command: '{}'".format(self._mesh_id, message))
+            if (value == "!"):
+                self._is_on = not self._is_on
+            else:
+                self._is_on = value
+
+
+        # End possible COMMANDS
+
+
+
+
+        # All possible queries handled, pubstring reflects this switch's response
+        if (isQuery):
+            if (self.opt_verbose): print("    ({}) Responding to query... '{}'".format(self._mesh_id, pubstring))
+            self._client.publish(TOPIC_REPLY, pubstring)
 
 #--------------------------------------|
 #   #__init__()
@@ -251,12 +355,16 @@ class switch:
     def __init__(self, client, broker, switch_profile):
         # Virtualization fields
         self._topic                 = TOPIC_QUERY
+
         self._is_on                 = True
+        if (random.randint(0,100) < 50):
+            self._is_on             = False
         self._room                  = ''
         self._group                 = ''
         self._client                = None
         self.message_ID             = ''
         self.message_command        = ''
+        self.opt_verbose            = VERBOSE
         # Actual fields
         self._backplate_slot        = switch_profile['backplate_slot']
         self._device_type           = switch_profile['device_type']
@@ -282,6 +390,7 @@ class switch:
         # Connect and subscribe
         self._client = client
         self._client.on_message = self.switch_unpack
+        self._client.on_disconnect = self.switch_terminate
         self._client.connect(broker)
         self._client.loop_start()
         self._client.subscribe(self._topic)
@@ -307,11 +416,31 @@ class switch:
 # MetCall: NULL
 def control_unpack(client, userdata, message):
     payload = str(message.payload.decode("utf-8"))
-    print("(CTRL) Message received:" , payload)
+    print("  (CTRL) Message received: '{}'".format(payload))
     ID       = parse_reply_ID(payload)
     category = parse_reply_category(payload)
     value    = parse_reply_value(payload)
     process_reply(ID, category, value)
+
+#--------------------------------------|
+#   #control_terminate()
+#--------------------------------------|
+# Desc:    Termination behavior for the controller MQTT client
+# Params:  NULL
+# PreCons: NULL
+# PosCons: NULL
+# RetVal:  NULL
+# MetCall: NULL
+def control_terminate(client, userdata, message):
+    if (VERBOSE): print("(CTRL) Termination callback, disconnected")
+
+
+
+#---|---|---|---|------------------------------------------------------|------|
+#
+#   START EXECUTION
+#
+#---|---|---|---|------------------------------------------------------|------|
 
 #--------------------------------------|
 #   #virtswitch_controller()
@@ -324,30 +453,63 @@ def control_unpack(client, userdata, message):
 # RetVal:  NULL
 # MetCall: NULL
 @click.command()
-@click.option('--broker_addy', default = "127.0.0.1", help = 'The MQTT broker address')
+@click.option('--run', default = "commands.txt", help = "The command file to run (default 'commands.txt')")
+@click.option('--broker_addy', default = "127.0.0.1", help = "The MQTT broker address (default '127.0.0.1'")
 @click.option('-v', '--verbose', is_flag = True, help = 'Enables verbose mode')
 @click.argument('mesh_file')
-def virtswitch_controller(mesh_file, broker_addy, verbose):
+def virtswitch_controller(mesh_file, broker_addy, verbose, run):
 
     #--------------------------------------|
-    #   Verbose Mode
+    #   Verbose Mode Setup
     #--------------------------------------|
+    # TODO: Change the verbosity to a configuration instance that informs all other things in the program
+    # Rather than a variable used throughout.
+    # See 'Singleton pattern'
 
-    if(verbose == True):
+    global the_mesh
+    global total_status
+    # Verbosity of the switches (and other classes in the future)
+    global VERBOSE
+    # Global verbosity gets the local verbosity argument (TODO: Clean this up)
+    VERBOSE = verbose
+
+    # Verbosity of the controller
+    if(verbose):
         def verboseprint(*args):
         # Print each argument separately so caller doesn't need to
         # stuff everything to be printed into a single string
             for arg in args:
                 print(arg)
-            print()
     else:   
         verboseprint = lambda *a: None      # do-nothing function
 
 
 
-    # Setup
-    verboseprint("Verify arg vector: broker_addy:", broker_addy)
-    verboseprint("Verify arg vector: mesh_file  :", mesh_file)
+    #--------------------------------------|
+    #   File Setup
+    #--------------------------------------|
+
+    if (verbose):
+        print("Verify arg vector: broker_addy   :", broker_addy)
+        print("Verify arg vector: mesh_file     :", mesh_file)
+        print("Verify arg vector: command_file  :", run)
+        print()
+
+    # If the file directed to is different than the default...
+    if (run != 'commands.txt'):
+        # Close the current file
+        command_file.close()
+        # And reopen a different one
+        command_file.open(run, 'r')
+
+    # Check the file input
+    command_strings = command_file.readlines()
+    if (verbose):
+        print("Command File Contents:", command_file)
+        for line in command_strings:
+            print(line, end='')
+        print()
+
 
     #--------------------------------------|
     #   Profile Acquisition Setup
@@ -362,36 +524,39 @@ def virtswitch_controller(mesh_file, broker_addy, verbose):
     a_profile       = response.json()
     switch_profiles = response.json()['switches']
     a_switch        = response.json()['switches'][0] # [0] [MAX]
-    # a_field       = response.json()['switches'][0]['uuid']
+    a_field         = response.json()['switches'][0]['uuid']
 
     # --- FOR TESTING PURPOSES ONLY --- START ---
-    print()
-    print("JSON Profile:")
-    print(type(a_profile))
-    print(a_profile)
+    if (verbose):
+        print()
+        print("JSON Profile ( 'response.json()' ):")
+        print(type(a_profile))
+        for i in a_profile:
+            print(i)
+            print(".")
 
-    print()
-    print("Switch Profiles:")
-    print(type(switch_profiles))
-    print(switch_profiles)
+        print()
+        print("Switch Profiles ( 'response.json()['switches']' ):")
+        print(type(switch_profiles))
+        for i in switch_profiles:
+            print(i)
+            print(".")
 
-    print()
-    print("First Switch Profile:")
-    print(type(a_switch))
-    print(a_switch)
+        print()
+        print("First Switch Profile ( 'response.json()['switches'][0]' ):")
+        print(type(a_switch))
+        for i in a_switch:
+            print("-", i)
 
-    print()
-    print("First Switch fields:")
-    for i in a_switch:
-        print(i, ":", a_switch[i], type(a_switch[i]))
+        print()
+        print("First Switch fields ( 'response.json()['switches'][0]['<field>']' ):")
+        for i in a_switch:
+            print("- {0:<21}: ".format(i), end = '')
+            print(a_switch[i], ' ', end = '')
+            print(type(a_switch[i]))
+        
+        print()
     # --- FOR TESTING PURPOSES ONLY --- END ---
-
-    # Parse the profile (mesh) fields
-    print()
-    print("Parse profiles:")
-    parse_profile(a_profile)
-    # For debugging
-    # print_profile()
 
     #--------------------------------------|
     #   Mesh Generation Setup
@@ -399,19 +564,34 @@ def virtswitch_controller(mesh_file, broker_addy, verbose):
 
     # Generate a bank of switches
     # For every switch in the profile...
-    vID = 0
-    for a_profile in switch_profiles:
-        # Make a new switch and append it to the the_mesh
-        # By dictionary
-        new_client = mqtt.Client(str(vID))
-        the_mesh.append( switch(new_client, broker_addy, a_profile) )
-        vID += 1
-        # By fields
-        # the_mesh.append(switch(TOPIC_QUERY, every_switch['uuid'], True, 'void', 'g3', mqtt.Client(every_switch['uuid'])))
+    vID = 0 # Only used to assign MQTT broker IDs
+    shadow_vID = vID + MAX_SWITCHES
 
-    # the_mesh.append(switch(TOPIC_QUERY, '001', True, 'kitchen', 'g1', mqtt.Client('A_Switch1')))
-    # the_mesh.append(switch(TOPIC_QUERY, '002', False, 'kitchen', 'g2', mqtt.Client('A_Switch2')))
-    # the_mesh.append(switch(TOPIC_QUERY, '003', True, 'bath', 'g1', mqtt.Client('A_Switch3')))
+    for a_profile in switch_profiles:
+        # By dictionary
+        shadow_client = mqtt.Client(str(shadow_vID))
+        # Generate a shadow switch with the same settings and append to status mesh
+        shadow_switch = switch(shadow_client, broker_addy, a_profile)
+        # Immediately disconnect the status switch
+        shadow_switch._client.disconnect()
+        if (VERBOSE): print("({}) Status-bank (shadow switch) disconnecting...".format(shadow_switch._mesh_id))
+
+        # Make a new switch and append it to the the_mesh
+        new_client = mqtt.Client(str(vID))
+
+        # Generate and append a switch to the virt mesh
+        mesh_switch = switch(new_client, broker_addy, a_profile)
+        the_mesh[str(mesh_switch._mesh_id)] = mesh_switch
+        
+        #                                         KEY : VALUE
+        # total_status.append( shadow_switch._mesh_id : shadow_switch )
+        #            KEY                     = VALUE
+        total_status[str(shadow_switch._mesh_id)] = shadow_switch
+        # ASSUMES NO REPEAT MESH IDS, OTHERWISE WE'LL LOST VALUES
+
+        # Increment the vID numbers
+        vID += 1
+        shadow_vID += 1
 
 
 
@@ -421,17 +601,11 @@ def virtswitch_controller(mesh_file, broker_addy, verbose):
 
     # Collate all statuses together by...
     # Generating a status-tracking duplicate of the_mesh
-    # TODO: Get deep copy working
-    # mesh_status = copy.deepcopy(the_mesh)
-    print("Mesh status:")
-    print(the_mesh)
-
-    ID_status    = ['001', '002', '003']
-    is_on_status = [0, 1, 0]
-    room_status  = ['kitchen', 'kitchen', 'bath']
-    total_status.append(ID_status)
-    total_status.append(is_on_status)
-    total_status.append(room_status)
+    verboseprint("Status Mesh (shadow mesh) status:")
+    if (verbose):
+        for status_switch in total_status:
+            print (status_switch)
+    verboseprint("")
 
 
 
@@ -439,9 +613,12 @@ def virtswitch_controller(mesh_file, broker_addy, verbose):
     #   Controller MQTT Client Setup
     #--------------------------------------|
 
+    verboseprint("Controller (CTRL) MQTT client setting up...")
+    verboseprint("")
+
     # Create a control client
-    control = mqtt.Client('000_Controller')
-    control.on_message = control_unpack #attach function to callback
+    control.on_message = control_unpack       # Attach on-message behavior to callback
+    control.on_disconnect = control_terminate # Attach on-terminate behavior to callback
 
     # Connect to broker
     control.connect(broker_addy)
@@ -455,33 +632,125 @@ def virtswitch_controller(mesh_file, broker_addy, verbose):
 
 
     #--------------------------------------|
-    #   Mesh operations
+    #   Mesh Summary Operations
     #--------------------------------------|
 
-    # Check status of switch '003' is_on
-    print()
-    print("003 is_on: {}".format(total_status[1][2]))
-    print()
-
-    # Test connection
-    control.publish(TOPIC_QUERY, "003 is_on")
+    # Execute the command file
+    execute(command_strings)
 
     time.sleep(5) # wait
 
     # Check status of switch '003' is_on again
-    print()
-    print("003 is_on: {}".format(total_status[1][2]))
-    print()
+#    print()
+#    print("003 is_on: {}".format(total_status[1][2]))
+#    print()
 
+    # Closes all connections and frees all resources before closure
+    obliviate()
+
+    time.sleep(1)
     control.loop_stop() #stop the loop
 
+    print()
     print("Goodbye, World!")
+    print()
 
 #--------------------------------------|
 #   End #virtswitch_controller()
 #--------------------------------------|
 
+#---|---|---|---|------------------------------------------------------|------|
+#
+#   END EXECUTION
+#
+#---|---|---|---|------------------------------------------------------|------|
 
+#--------------------------------------|
+#   #execute()
+#--------------------------------------|
+# Desc:    Parses and executes the command file
+# Params:  None
+# PreCons: GIGO - Assumes correct command formatting, no error checking is performed
+# PosCons: All commands have been executed
+# RetVal:  None
+# MetCall: None
+def execute(command_array):
+    global total_status
+    if (VERBOSE):
+        print("Executing Command File:", command_file)
+        for line in command_array:
+            print(line, end='')
+        print()
+    tgt = 0
+    cmd = ''
+    val = ''
+    if (VERBOSE): print()
+    for line in command_array:
+        tgt = line.split(' ')[0]
+        cmd = line.split(' ')[1]
+        val = line.split(' ')[2]
+        if (VERBOSE): print("(CTRL) EXECUTING COMMAND --- '{} : {} : {}'".format(tgt, cmd, val))
+
+        # All possible commands go in here
+        # '0 report is_on'
+        if (cmd == 'report'):
+            if (val == 'is_on'):
+                print("(CTRL) Reporting: 'is_on'")
+                for i in total_status:
+                    print("  ({}) is_on == ({})".format(total_status[i]._mesh_id, total_status[i]._is_on))
+
+        elif (cmd == 'build'):
+            print("(CTRL) Build command detected. TODO: Write this")
+            #TODO: actually build the virt mesh
+        elif (cmd == 'is_on'):
+            control.publish(TOPIC_QUERY, "{} {} {}".format(tgt, cmd, val)) #val is not used but must be sent
+
+        elif (cmd == 'dimmage'):
+            control.publish(TOPIC_QUERY, "{} {} {}".format(tgt, cmd, val))
+
+        elif (cmd == 'set_dimmage'):
+            control.publish(TOPIC_QUERY, "{} {} {}".format(tgt, cmd, val))
+
+        elif (cmd == 'set_on'):
+            control.publish(TOPIC_QUERY, "{} {} {}".format(tgt, cmd, val))
+
+#        elif (cmd == ''):
+#            control.publish(TOPIC_QUERY, "{} {} {}".format(tgt)
+
+#        elif (cmd == ''):
+#            control.publish(TOPIC_QUERY, "{} {} {}".format(tgt)
+
+#        elif (cmd == ''):
+#            control.publish(TOPIC_QUERY, "{} {} {}".format(tgt)
+
+        # End possible commands
+
+        if (VERBOSE): input()
+        print()
+        print()
+
+#--------------------------------------|
+#   #obliviate()
+#--------------------------------------|
+# Desc:    Deallocates all resources and closes all connections
+# Params:  None
+# PreCons: None
+# PosCons: All connections have been closed and resources deallocated
+# RetVal:  None
+# MetCall: None
+def obliviate():
+    global total_status
+    # Disconnect all MQTT switch clients
+    for i in the_mesh:
+        if (VERBOSE): print("({}) Disconnecting...".format(total_status[i]._mesh_id))
+        total_status[i]._client.disconnect()
+    # Disconnect the controller MQTT client
+    if (VERBOSE): print("(CTRL) Closing control MQTT client...")
+    control.disconnect()
+
+    # Close the command file
+    if (VERBOSE): print("(CTRL) Closing command file...")
+    command_file.close()
 
 #--------------------------------------|
 #   #parse_profile()
@@ -589,7 +858,7 @@ def print_profile():
 #--------------------------------------|
 #   #parse_reply_ID()
 #--------------------------------------|
-# Desc:    Parses a response payload, identifying the mesh_id of the sender
+# Desc:    (CTRL) Parses a response payload, identifying the mesh_id of the sender
 #          <int>     <string>   <variable>
 #          <mesh_id> <category> <value>
 #          "33045    is_on      True"
@@ -598,17 +867,15 @@ def print_profile():
 # PosCons: None
 # RetVal:  int - The mesh_id from where the reply originated
 # MetCall: None
-def parse_reply_ID(query):
-    index = total_status[0].index("003")
-    # print("Index:", index)
-    return(index)
-    # TODO: Determine actual response format
-    # TODO: Write actual parse logic
+def parse_reply_ID(response):
+    # Split the string by whitespace and take the first index position (0)
+    response_ID = response.split(' ')[0]
+    return(response_ID)
 
 #--------------------------------------|
 #   #parse_reply_category()
 #--------------------------------------|
-# Desc:    Parses a response payload, identifying the response type
+# Desc:    (CTRL) Parses a response payload, identifying the response type
 #          <int>     <string>   <variable>
 #          <mesh_id> <category> <value>
 #          "33045    is_on      True"
@@ -617,33 +884,62 @@ def parse_reply_ID(query):
 # PosCons: None
 # RetVal:  string - The category or type of the reply
 # MetCall: None
-def parse_reply_category(query):
-    return("is_on")
-    # TODO: Determine actual response format
-    # TODO: Write actual parse logic
+def parse_reply_category(response):
+    # Split the string by whitespace and take the second index position (1)
+    response_category = response.split(' ')[1]
+    return(response_category)
 
 #--------------------------------------|
-#   #print_profile()
+#   #parse_reply_value()
 #--------------------------------------|
-# Desc:    Parses a response payload, identifying the value
+# Desc:    (CTRL) Parses a response payload, identifying the value
 #          <int>     <string>   <variable>
 #          <mesh_id> <category> <value>
-#          "33045    is_on      True"
-# Params:  string arg1 - The query (payload)
+#          "33045 is_on True"
+# Params:  string arg1 - The query (decoded payload)
 # PreCons: GIGO - Assumes correctly formatted input, no error checking is performed
-# PosCons: None
-# RetVal:  <variable> - The value contained in the response string
+# PosCons: The response has been captured as an int, string, and bool, as applicable
+# RetVal:  dictionary - Wrapper for the value contained in the response string. In format:
+#                       [int:val, string:val, bool:val]
 # MetCall: None
 def parse_reply_value(query):
-    return(1) # True
-    # TODO: Determine actual response format
-    # TODO: Write actual parse logic
+    # Split the string by whitespace and take the third index position (2)
+    value = query.split(' ')[2]
+
+    # Declare the return dictionary
+    retDict = {}
+
+    # Set the string representation of the command value
+    retDict['string'] = value
+
+    # Set the int representation of the command value
+    retDict['int']    = 0
+    # In the case of a boolean 'True'
+    if (value == 'True' or value == 'true'):
+        retDict['int'] = 1
+    else:
+        try:
+            retDict['int'] = int(value)
+        except ValueError:
+            if(value == 'False'):
+                retDict['int'] = 0
+            elif(value == 'True'):
+                retDict['int'] = 1
+            elif(VERBOSE): print("Value is not an int: {}".format(value))
+
+    # Set the bool representation of the command value
+    retDict['bool']   = False
+    if (value == 'True' or value == 'true' or value == '1' ):
+        retDict['bool'] = True
+
+    # Return the encapsulated responses
+    # In format: { string:'value' , int:# , bool:True/False }
+    return(retDict)
 
 #--------------------------------------|
 #   #process_reply()
 #--------------------------------------|
-# Desc:    Used by the controller to update its internal registers (logs) based
-#          on arguments received from the mesh.
+# Desc:    (CTRL) Updates status mesh based on messages from the Broker.
 # Params:  int arg1        - The mesh_id of the responding switch
 #          string arg2     - The category of the response
 #          <variable> arg3 - The response value
@@ -652,12 +948,118 @@ def parse_reply_value(query):
 # RetVal:  None
 # MetCall: None
 def process_reply(mesh_id, category, value):
-    print('Processing: {} : {} : {}'.format(mesh_id, category, value))
-    total_status[1][mesh_id] = value
+    global total_status
+
+    # if(VERBOSE): print('  (CTRL) Processing: {} : {} : {}'.format(mesh_id, category, value))
+    # TODO: Processing behavior goes here
+    # Access the target switch
+    # target = total_status['mesh_id'][mesh_id]
+
+    # 'is_on' response behavior
+    if (category == 'is_on'):
+        # Assign value to the status switch
+        total_status[mesh_id]._is_on = value['bool']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_is_on" set to ({})'.format(mesh_id, value['bool']))
+
+    elif (category == 'room'):
+        total_status[mesh_id]._room = value['string']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_room" set to ({})'.format(mesh_id, value['string']))
+
+    elif (category == 'group'):
+        total_status[mesh_id]._group = value['string']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_group" set to ({})'.format(mesh_id, value['string']))
+
+    elif (category == 'client'):
+        total_status[mesh_id]._client = value['string']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_client" set to ({})'.format(mesh_id, value['string']))        
+
+    elif (category == 'backplate_slot'):
+        total_status[mesh_id]._backplate_slot = value['int']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_backplate_slot" set to ({})'.format(mesh_id, value['string']))        
+
+    elif (category == 'device_type'):
+        total_status[mesh_id]._device_type = value['string']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_device_type" set to ({})'.format(mesh_id, value['string']))        
+
+    elif (category == 'downstream'):
+        total_status[mesh_id]._downstream = value['bool']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_downstream" set to ({})'.format(mesh_id, value['string']))        
+
+    elif (category == 'enabled'):
+        total_status[mesh_id]._enabled = value['bool']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_enabled" set to ({})'.format(mesh_id, value['string']))        
+
+    elif (category == 'faceplate_slot'):
+        total_status[mesh_id]._faceplate_slot = value['int']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_faceplate_slot" set to ({})'.format(mesh_id, value['string']))        
+
+    elif (category == 'firmware_rev'):
+        total_status[mesh_id]._firmware_rev = value['string']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_firmware_rev" set to ({})'.format(mesh_id, value['string']))        
+
+    elif (category == 'kebab_brightness'):
+        total_status[mesh_id]._kebab_brightness = value['bool']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_kebab_brightness" set to ({})'.format(mesh_id, value['string']))        
+
+    elif (category == 'keypad'):
+        total_status[mesh_id]._keypad = value['bool']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_keypad" set to ({})'.format(mesh_id, value['string']))        
+
+    elif (category == 'keypad_timeout'):
+        total_status[mesh_id]._keypad_timeout = value['int']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_keypad_timeout" set to ({})'.format(mesh_id, value['string']))        
+
+    elif (category == 'last_checkin'):
+        total_status[mesh_id]._last_checkin = value['string']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_last_checkin" set to ({})'.format(mesh_id, value['string']))        
+
+    elif (category == 'load_id'):
+        total_status[mesh_id]._load_id = value['string']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_load_id" set to ({})'.format(mesh_id, value['string']))
+
+    elif (category == 'load_name'):
+        total_status[mesh_id]._load_name = value['string']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_load_name" set to ({})'.format(mesh_id, value['string']))
+
+    elif (category == 'location'):
+        total_status[mesh_id]._location = value['string']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_location" set to ({})'.format(mesh_id, value['string']))
+
+    elif (category == 'mesh_id'):
+        total_status[mesh_id]._mesh_id = value['int']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_mesh_id" set to ({})'.format(mesh_id, value['string']))
+
+    elif (category == 'multiway'):
+        total_status[mesh_id]._multiway = value['bool']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_multiway" set to ({})'.format(mesh_id, value['string']))
+
+    elif (category == 'nightlight_brightness'):
+        total_status[mesh_id]._nightlight_brightness = value['int']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_nightlight_brightness" set to ({})'.format(mesh_id, value['string']))        
+
+    elif (category == 'nightlight_enabled'):
+        total_status[mesh_id]._nightlight_enabled = value['bool']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_nightlight_enabled" set to ({})'.format(mesh_id, value['string']))        
+
+    elif (category == 'order_id'):
+        total_status[mesh_id]._order_id = value['string']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_order_id" set to ({})'.format(mesh_id, value['string']))        
+
+    elif (category == 'sn'):
+        total_status[mesh_id]._sn = value['string']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_sn" set to ({})'.format(mesh_id, value['string']))        
+
+    elif (category == 'uuid'):
+        total_status[mesh_id]._uuid = value['string']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_uuid" set to ({})'.format(mesh_id, value['string']))
+
+    elif (category == 'dimmage'):
+        total_status[mesh_id]._dimmage = value['int']
+        if(VERBOSE): print('    (CTRL) ({}) accessed. "_dimmage" set to ({})'.format(mesh_id, value['int']))
 
 
 #---|---|---|---|------------------------------------------------------|------|
-#   #Execution
+#   Execution call
 #---|---|---|---|------------------------------------------------------|------|
 
 if __name__ == '__main__':

@@ -1,0 +1,18 @@
+0 . .                   # Comment goes like so
+0 . .                   # Everything past the 3rd space-delimited argument is ignored by the execute() function
+0 . .                   # All commands are 3 arguments (space-delimited) in the format <int_Target> <string_Command> <string_Value>
+0 build .               # Some commands ignore the first and/or third argument (no target or value is applicable)
+33033 dimmage .         # "Switch 33033, what is your dimmage value?"
+33025 dimmage .
+33025 set_dimmage 255   # Certain "queries" (denoted by 'set_' keyword) are intended to modify a switch's state
+33025 dimmage .
+33044 set_on True       # Denotes boolean value (1 or 0 will work eventually - TODO)
+33044 is_on .
+33044 set_on !          # Denotes reversal of current state (boolean only)
+33044 is_on .
+33044 set_on True       # Denotes boolean value (1 or 0 will work eventually - TODO)
+33044 is_on .
+99999 is_on .           # 99999 denotes an action to apply to all switches in the_mesh
+0 report is_on          # Not all commands are messages to send out - This one generates a report of the is_on state
+33044 mem_write thisisatestoftheemergencywritefunctionalitylookatuswritewheeeeee |
+33044 mem_read . |
